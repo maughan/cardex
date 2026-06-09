@@ -9,10 +9,19 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.cardex.app"
+      "bundleIdentifier": "com.cardex.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "CarDex uses your camera to catch cars you spot in the wild.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "com.cardex.app"
+      "package": "com.cardex.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "plugins": [
       [
@@ -26,7 +35,13 @@
         {
           "locationWhenInUsePermission": "CarDex tags your catches with where you found them."
         }
-      ]
-    ]
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3c1a3817-85dc-4b34-9316-f4be396d0162"
+      }
+    }
   }
 }

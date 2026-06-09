@@ -1,0 +1,280 @@
+-- =============================================================================
+-- CarDex — Supabase schema (v1)
+-- Target: Postgres 15+ (Supabase). Run as a migration.
+--
+-- Design notes:
+--   * One catches row per (user, car). Repeat sightings increment spotted_count
+--     (outside a cooldown) rather than creating duplicates.
+--   * Set completion is DERIVED via a view, never a stored counter, so it is
+--     always correct.
+--   * No user photos are stored server-side. best_local_photo_ref is an
+--     on-device reference only (optional personal memory).
+--   * Sprites use placeholder asset_urls for now (art is non-blocking).
+--   * Catalogue tables (cars/sprites/sets/set_cars) are public-read to
+--     authenticated users; writes happen via the service role (which bypasses
+--     RLS) from an admin/seed path — no client write policies are defined.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Extensions
+-- ---------------------------------------------------------------------------
+create extension if not exists pgcrypto;        -- gen_random_uuid()
+-- create extension if not exists vector;        -- (future) pgvector embeddings
+
+-- ---------------------------------------------------------------------------
+-- 2. Enums
+-- ---------------------------------------------------------------------------
+create type rarity_tier as enum ('common', 'uncommon', 'rare', 'epic', 'legendary');
+
+create type body_type as enum (
+  'hatchback', 'sedan', 'coupe', 'suv', 'truck',
+  'van', 'wagon', 'convertible', 'sports', 'other'
+);
+
+-- ---------------------------------------------------------------------------
+-- 3. updated_at trigger helper
+-- ---------------------------------------------------------------------------
+create or replace function set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 4. Profiles (public mirror of auth.users)
+-- ---------------------------------------------------------------------------
+create table profiles (
+  id          uuid primary key references auth.users(id) on delete cascade,
+  handle      text not null unique,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create trigger profiles_set_updated_at
+  before update on profiles
+  for each row execute function set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- 5. Cars catalogue (the Dex master list)
+-- ---------------------------------------------------------------------------
+create table cars (
+  id           bigint generated always as identity primary key,
+  make         text        not null,
+  model        text        not null,
+  generation   text,                                   -- e.g. 'E46'; nullable
+  year_start   int,
+  year_end     int,
+  body         body_type   not null default 'other',
+  rarity_tier  rarity_tier not null default 'common',
+  created_at   timestamptz not null default now(),
+  unique (make, model, generation)
+);
+
+create index cars_rarity_idx on cars (rarity_tier);
+create index cars_make_idx   on cars (make);
+
+-- ---------------------------------------------------------------------------
+-- 6. Sprites (placeholder refs for now; one "current" sprite per car)
+-- ---------------------------------------------------------------------------
+create table sprites (
+  id          bigint generated always as identity primary key,
+  car_id      bigint      not null references cars(id) on delete cascade,
+  asset_url   text        not null,
+  version     int         not null default 1,
+  is_current  boolean     not null default true,
+  created_at  timestamptz not null default now()
+);
+
+-- At most one current sprite per car.
+create unique index sprites_one_current_per_car
+  on sprites (car_id) where is_current;
+
+-- ---------------------------------------------------------------------------
+-- 7. Catches (one row per user+car)
+-- ---------------------------------------------------------------------------
+create table catches (
+  id                   bigint generated always as identity primary key,
+  user_id              uuid        not null references auth.users(id) on delete cascade,
+  car_id               bigint      not null references cars(id),
+  first_caught_at      timestamptz not null default now(),
+  last_caught_at       timestamptz not null default now(),
+  spotted_count        int         not null default 1,
+  best_confidence      real,
+  best_local_photo_ref text,                           -- on-device ref only
+  last_lat             double precision,
+  last_lng             double precision,
+  unique (user_id, car_id)
+);
+
+create index catches_user_idx on catches (user_id);
+create index catches_car_idx  on catches (car_id);
+
+-- ---------------------------------------------------------------------------
+-- 8. Sets & membership
+-- ---------------------------------------------------------------------------
+create table sets (
+  id          bigint generated always as identity primary key,
+  slug        text not null unique,
+  name        text not null,
+  theme       text,
+  description text,
+  created_at  timestamptz not null default now()
+);
+
+create table set_cars (
+  set_id  bigint not null references sets(id) on delete cascade,
+  car_id  bigint not null references cars(id) on delete cascade,
+  primary key (set_id, car_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- 9. Recognition logs (the data flywheel)
+-- ---------------------------------------------------------------------------
+create table recognition_logs (
+  id             bigint generated always as identity primary key,
+  user_id        uuid        not null references auth.users(id) on delete cascade,
+  guesses        jsonb       not null,                 -- ranked model candidates
+  chosen_car_id  bigint      references cars(id),
+  was_corrected  boolean     not null default false,   -- chosen != top guess
+  model_version  text,
+  spoof_score    real,
+  created_at     timestamptz not null default now()
+);
+
+create index recognition_logs_created_idx   on recognition_logs (created_at);
+create index recognition_logs_corrected_idx on recognition_logs (was_corrected);
+
+-- ===========================================================================
+-- 10. Row Level Security
+-- ===========================================================================
+alter table profiles         enable row level security;
+alter table cars             enable row level security;
+alter table sprites          enable row level security;
+alter table sets             enable row level security;
+alter table set_cars         enable row level security;
+alter table catches          enable row level security;
+alter table recognition_logs enable row level security;
+
+-- Catalogue: read-only to any authenticated user. No write policies => client
+-- writes are denied; the service role bypasses RLS for seeding/admin.
+create policy "cars are readable"     on cars     for select to authenticated using (true);
+create policy "sprites are readable"  on sprites  for select to authenticated using (true);
+create policy "sets are readable"     on sets     for select to authenticated using (true);
+create policy "set_cars are readable" on set_cars for select to authenticated using (true);
+
+-- Profiles: public read, self-write.
+create policy "profiles are readable" on profiles
+  for select to authenticated using (true);
+create policy "insert own profile" on profiles
+  for insert to authenticated with check (id = (select auth.uid()));
+create policy "update own profile" on profiles
+  for update to authenticated
+  using (id = (select auth.uid()))
+  with check (id = (select auth.uid()));
+
+-- Catches: owner-only CRUD.
+create policy "select own catches" on catches
+  for select to authenticated using (user_id = (select auth.uid()));
+create policy "insert own catches" on catches
+  for insert to authenticated with check (user_id = (select auth.uid()));
+create policy "update own catches" on catches
+  for update to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+create policy "delete own catches" on catches
+  for delete to authenticated using (user_id = (select auth.uid()));
+
+-- Recognition logs: owner insert/select (writes ideally via service role).
+create policy "insert own rec logs" on recognition_logs
+  for insert to authenticated with check (user_id = (select auth.uid()));
+create policy "select own rec logs" on recognition_logs
+  for select to authenticated using (user_id = (select auth.uid()));
+
+-- Table privileges for the PostgREST roles. RLS still governs which ROWS are
+-- visible; these GRANTs govern table access (without them, an authenticated
+-- query returns "permission denied for table ..."). Supabase usually adds
+-- these automatically, but we set them explicitly to be safe.
+grant usage on schema public to anon, authenticated;
+grant select on cars, sprites, sets, set_cars to anon, authenticated;
+grant select, insert, update, delete on catches to authenticated;
+grant select, insert on recognition_logs to authenticated;
+
+-- ===========================================================================
+-- 11. Set-progress view
+--   security_invoker => runs with the caller's RLS, so the join to catches
+--   only sees the current user's rows. One row per (set) for the caller.
+-- ===========================================================================
+create view user_set_progress
+  with (security_invoker = true) as
+select
+  s.id                                                                 as set_id,
+  s.slug,
+  s.name,
+  count(sc.car_id)                                                     as total_cars,
+  count(c.id)                                                          as caught_cars,
+  round(100.0 * count(c.id) / nullif(count(sc.car_id), 0), 1)         as pct_complete
+from sets s
+join set_cars sc on sc.set_id = s.id
+left join catches c
+  on c.car_id = sc.car_id
+ and c.user_id = (select auth.uid())
+group by s.id, s.slug, s.name;
+
+grant select on user_set_progress to authenticated;
+
+-- ===========================================================================
+-- 12. record_catch() — atomic upsert with anti-farming cooldown
+--   Called by the Edge Function after recognition + anti-cheat pre-checks.
+--   First sighting inserts (spotted_count = 1). A repeat only increments the
+--   count / updates last_caught_at if it is outside the cooldown window.
+-- ===========================================================================
+create or replace function record_catch(
+  p_car_id     bigint,
+  p_confidence real             default null,
+  p_lat        double precision default null,
+  p_lng        double precision default null,
+  p_photo_ref  text             default null,
+  p_cooldown   interval         default interval '10 minutes'
+)
+returns catches
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user uuid := (select auth.uid());
+  v_row  catches;
+begin
+  if v_user is null then
+    raise exception 'not authenticated';
+  end if;
+
+  insert into catches as c
+    (user_id, car_id, best_confidence, last_lat, last_lng, best_local_photo_ref)
+  values
+    (v_user, p_car_id, p_confidence, p_lat, p_lng, p_photo_ref)
+  on conflict (user_id, car_id) do update set
+    spotted_count = case
+      when c.last_caught_at < now() - p_cooldown then c.spotted_count + 1
+      else c.spotted_count
+    end,
+    last_caught_at = case
+      when c.last_caught_at < now() - p_cooldown then now()
+      else c.last_caught_at
+    end,
+    last_lat             = excluded.last_lat,
+    last_lng             = excluded.last_lng,
+    best_confidence      = greatest(coalesce(c.best_confidence, 0), coalesce(excluded.best_confidence, 0)),
+    best_local_photo_ref = coalesce(excluded.best_local_photo_ref, c.best_local_photo_ref)
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+grant execute on function record_catch(bigint, real, double precision, double precision, text, interval)
+  to authenticated;

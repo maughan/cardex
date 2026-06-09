@@ -15,29 +15,58 @@ npx expo install --fix          # align native module versions to the SDK
 cp .env.example .env            # fill in your Supabase URL + anon key
 ```
 
-vision-camera and reanimated include native code, so **Expo Go won't work** —
-you need a custom dev client. Once built, it behaves like Expo Go: run
-`npm start`, scan the QR, and you get live reload on a physical device.
+vision-camera, reanimated, and react-native-maps include native code, so
+**Expo Go won't work** — you need a custom dev client. Once built, it behaves
+like Expo Go: run `npm start`, scan the QR, and you get live reload.
 
-### Option A — EAS Build (no Xcode/Mac required) — recommended for now
+### Build a dev client with EAS (cloud — no Mac required)
+
+Prerequisites: an [Expo account](https://expo.dev), `npm install -g eas-cli`,
+and (for an iPhone) an **Apple Developer Program** membership — a physical iOS
+device build must be code-signed, which a free Apple ID can't do via EAS.
 
 ```bash
-npm install -g eas-cli
+npm install                 # pull all native deps (maps, camera, etc.)
 eas login
-eas build --profile development --platform ios     # builds in the cloud
+# project is already linked via extra.eas.projectId in app.json
 ```
 
-Install the resulting build on your iPhone, then `npm start` and scan the QR.
-Note: iOS still needs an Apple ID registered with the project for device
-signing; full App Store distribution requires a paid Apple Developer account
-(sort licensing before going to production).
-
-### Option B — Local build (needs Xcode / Android Studio) — later
+**iOS — physical iPhone** (requires the paid Apple account):
 
 ```bash
-npx expo run:ios       # requires Xcode
+eas device:create           # registers your iPhone; install the profile it shows
+eas build --profile development --platform ios
+```
+
+`device:create` gives you a QR / URL — open it on the iPhone and install the
+provisioning profile (Settings → Profile Downloaded). Then the build runs in
+the cloud (~10–20 min), and EAS returns a link to install the dev client.
+
+**No Apple account yet?** Two free alternatives:
+
+```bash
+eas build --profile development-simulator --platform ios   # iOS Simulator (needs a Mac)
+eas build --profile development --platform android         # any Android device
+```
+
+**Then, for any of the above**, start the bundler and load onto the dev client:
+
+```bash
+cp .env.example .env        # fill in EXPO_PUBLIC_SUPABASE_URL + anon key first
+npx expo start --dev-client # scan the QR from the installed dev client
+```
+
+### Local build alternative (needs Xcode / Android Studio)
+
+```bash
+npx expo run:ios       # requires Xcode (free personal team works, 7-day signing)
 npx expo run:android   # requires Android Studio
 ```
+
+### Maps note
+
+iOS uses Apple Maps (no key). For Android, add a Google Maps API key to
+`app.json` under `expo.android.config.googleMaps.apiKey` before the map renders.
 
 ## Project structure
 

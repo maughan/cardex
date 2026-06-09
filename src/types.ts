@@ -38,9 +38,17 @@ export interface CatchRow {
   last_caught_at: string;
 }
 
+export interface CompletedSet {
+  slug: string;
+  name: string;
+}
+
 // Response from the `confirm-catch` Edge Function.
 export interface ConfirmResult {
   isNew: boolean;
   catch: CatchRow;
   card: CardPayload;
+  // Sets that this catch just completed (only ever populated when isNew).
+  // Optional so the client tolerates an older deployed function.
+  completedSets?: CompletedSet[];
 }

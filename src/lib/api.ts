@@ -40,6 +40,21 @@ export async function recognize(
   return (await res.json()) as RecognizeResult;
 }
 
+// DEV-only: trigger recognition without a photo. Works against the mock
+// recognize branch (MOCK_RECOGNITION=true), which ignores the image. Lets the
+// full loop be exercised in Expo Go before the camera dev client exists.
+export async function recognizeSimulated(): Promise<RecognizeResult> {
+  const form = new FormData();
+  form.append("liveCapture", "true");
+  const res = await fetch(`${FUNCTIONS_URL}/recognize`, {
+    method: "POST",
+    headers: { Authorization: await authHeader() },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`recognize (simulated) failed (${res.status})`);
+  return (await res.json()) as RecognizeResult;
+}
+
 export interface ConfirmInput {
   carId: number;
   topGuessCarId?: number;

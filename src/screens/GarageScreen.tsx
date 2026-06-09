@@ -2,7 +2,6 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,18 +9,25 @@ import {
   Text,
   View,
 } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
   fetchGarage,
   fetchSetProgress,
   type GarageEntry,
   type SetProgress,
 } from "../lib/collection";
-import { RARITY_LABEL, rarityColor } from "../lib/rarity";
-import { useAuth } from "../context/AuthProvider";
+import type { GarageStackParamList } from "../navigation/types";
+import { C } from "../theme/colors";
+import { F } from "../theme/type";
+import { PixelCard } from "../components/ui/PixelCard";
+import { PixelProgressBar } from "../components/ui/PixelProgressBar";
+import { rarityColor } from "../lib/rarity";
+
+type Nav = NativeStackNavigationProp<GarageStackParamList, "GarageHome">;
 
 export function GarageScreen() {
-  const { signOut } = useAuth();
+  const navigation = useNavigation<Nav>();
   const [garage, setGarage] = useState<GarageEntry[]>([]);
   const [sets, setSets] = useState<SetProgress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,7 +48,6 @@ export function GarageScreen() {
     }
   }, []);
 
-  // Reload whenever the tab regains focus (e.g. after a catch).
   useFocusEffect(
     useCallback(() => {
       load();
@@ -57,7 +62,7 @@ export function GarageScreen() {
   if (loading) {
     return (
       <View style={[styles.fill, styles.center]}>
-        <ActivityIndicator size="large" color="#fff" />
+        <ActivityIndicator size="large" color={C.accent} />
       </View>
     );
   }
@@ -70,70 +75,107 @@ export function GarageScreen() {
       numColumns={3}
       columnWrapperStyle={styles.row}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.accent} />}
       ListHeaderComponent={
         <View>
           {error && <Text style={styles.error}>{error}</Text>}
 
-          <Text style={styles.sectionTitle}>Sets</Text>
+          {/* Sets strip */}
+          <Text style={styles.sectionTitle}>SETS</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.setsRow}>
             {sets.map((s) => (
-              <View key={s.setId} style={styles.setCard}>
-                <Text style={styles.setName}>{s.name}</Text>
+              <Pressable
+                key={s.setId}
+                style={styles.setCard}
+                onPress={() => navigation.navigate("SetDetail", { slug: s.slug, name: s.name })}
+              >
+                <Text style={styles.setName} numberOfLines={1}>{s.name.toUpperCase()}</Text>
                 <Text style={styles.setCount}>{s.caughtCars}/{s.totalCars}</Text>
-                <View style={styles.barTrack}>
-                  <View style={[styles.barFill, { width: `${s.pctComplete}%` }]} />
-                </View>
-              </View>
+                <PixelProgressBar
+                  pct={s.pctComplete}
+                  color={s.pctComplete === 100 ? C.gold : C.accent}
+                  style={styles.setBar}
+                />
+              </Pressable>
             ))}
           </ScrollView>
 
-          <View style={styles.garageHeader}>
-            <Text style={styles.sectionTitle}>Garage ({garage.length})</Text>
-            <Pressable onPress={signOut}><Text style={styles.signout}>Sign out</Text></Pressable>
-          </View>
+          {/* Garage header */}
+          <Text style={styles.sectionTitle}>
+            GARAGE{" "}
+            <Text style={styles.sectionCount}>{garage.length}</Text>
+          </Text>
         </View>
       }
       ListEmptyComponent={
-        <Text style={styles.empty}>No catches yet — head to the Hunt tab and bag your first car.</Text>
+        <Text style={styles.empty}>
+          NO CATCHES YET{"\n"}HEAD TO HUNT AND BAG YOUR FIRST CAR
+        </Text>
       }
-      renderItem={({ item }) => (
-        <View style={[styles.tile, { borderColor: rarityColor(item.rarityTier) }]}>
-          {item.spriteUrl
-            ? <Image source={{ uri: item.spriteUrl }} style={styles.sprite} resizeMode="contain" />
-            : <View style={styles.spritePlaceholder}><Text style={styles.placeholder}>?</Text></View>}
-          <Text style={styles.tileLabel} numberOfLines={1}>{item.label}</Text>
-          <Text style={[styles.tileRarity, { color: rarityColor(item.rarityTier) }]}>
-            {RARITY_LABEL[item.rarityTier]}
-          </Text>
-          {item.spottedCount > 1 && <Text style={styles.count}>×{item.spottedCount}</Text>}
-        </View>
+      renderItem={({ item, index }) => (
+        <PixelCard
+          dexNumber={index + 1}
+          label={item.label}
+          rarityTier={item.rarityTier}
+          spriteUrl={item.spriteUrl}
+          spottedCount={item.spottedCount}
+          style={styles.card}
+        />
       )}
     />
   );
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, backgroundColor: "#0B0C0F" },
+  fill: { flex: 1, backgroundColor: C.lcdBg },
   center: { alignItems: "center", justifyContent: "center" },
-  content: { padding: 12, paddingBottom: 40 },
-  row: { gap: 10, marginBottom: 10 },
-  error: { color: "#E5534B", fontSize: 14, marginBottom: 12 },
-  sectionTitle: { color: "#fff", fontSize: 18, fontWeight: "700", marginTop: 8, marginBottom: 10 },
-  setsRow: { marginBottom: 8 },
-  setCard: { width: 150, backgroundColor: "#15171C", borderRadius: 12, padding: 12, marginRight: 10 },
-  setName: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  setCount: { color: "#9AA0A6", fontSize: 12, marginTop: 2, marginBottom: 8 },
-  barTrack: { height: 6, borderRadius: 3, backgroundColor: "#23262E", overflow: "hidden" },
-  barFill: { height: 6, borderRadius: 3, backgroundColor: "#2F80ED" },
-  garageHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  signout: { color: "#6B7178", fontSize: 13 },
-  empty: { color: "#9AA0A6", fontSize: 14, textAlign: "center", marginTop: 32, paddingHorizontal: 20 },
-  tile: { flex: 1 / 3, backgroundColor: "#15171C", borderRadius: 12, borderWidth: 1, padding: 8, alignItems: "center" },
-  sprite: { width: "100%", height: 60, marginBottom: 6 },
-  spritePlaceholder: { width: "100%", height: 60, borderRadius: 8, backgroundColor: "#23262E", alignItems: "center", justifyContent: "center", marginBottom: 6 },
-  placeholder: { color: "#4A4F58", fontSize: 24, fontWeight: "800" },
-  tileLabel: { color: "#fff", fontSize: 12, fontWeight: "600", textAlign: "center" },
-  tileRarity: { fontSize: 10, fontWeight: "700", marginTop: 2 },
-  count: { color: "#9AA0A6", fontSize: 11, marginTop: 2 },
+  content: { padding: 10, paddingBottom: 40 },
+  row: { gap: 8, marginBottom: 8 },
+  error: { fontFamily: F.body, color: C.red, fontSize: 15, marginBottom: 10 },
+  sectionTitle: {
+    fontFamily: F.display,
+    color: C.text,
+    fontSize: 8,
+    letterSpacing: 2,
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  sectionCount: {
+    color: C.textDim,
+    fontSize: 7,
+  },
+  setsRow: { marginBottom: 4 },
+  setCard: {
+    width: 140,
+    backgroundColor: C.panel,
+    borderWidth: 2,
+    borderColor: C.line,
+    borderRadius: 2,
+    padding: 10,
+    marginRight: 8,
+    gap: 4,
+  },
+  setName: {
+    fontFamily: F.display,
+    color: C.text,
+    fontSize: 7,
+    letterSpacing: 0.5,
+  },
+  setCount: {
+    fontFamily: F.body,
+    color: C.textDim,
+    fontSize: 15,
+  },
+  setBar: { marginTop: 4 },
+  empty: {
+    fontFamily: F.display,
+    color: C.textDim,
+    fontSize: 7,
+    textAlign: "center",
+    marginTop: 32,
+    paddingHorizontal: 20,
+    lineHeight: 16,
+    letterSpacing: 1,
+  },
+  card: { flex: 1 / 3 },
 });
