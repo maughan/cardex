@@ -1,0 +1,40 @@
+{
+  "name": "cardex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CarDex — a Pokédex for the cars you spot in the wild (Expo + TypeScript)",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~51.0.0",
+    "expo-dev-client": "~4.0.0",
+    "expo-status-bar": "~1.12.0",
+    "expo-location": "~17.0.0",
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "@supabase/supabase-js": "^2.45.0",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "react-native-url-polyfill": "^2.0.0",
+    "react-native-vision-camera": "^4.5.0",
+    "react-native-reanimated": "~3.10.1",
+    "react-native-gesture-handler": "~2.16.1",
+    "react-native-screens": "3.31.1",
+    "react-native-safe-area-context": "4.10.5",
+    "@react-navigation/native": "^6.1.18",
+    "@react-navigation/native-stack": "^6.11.0",
+    "@react-navigation/bottom-tabs": "^6.6.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~18.2.79",
+    "typescript": "~5.3.3"
+  },
+  "comments": {
+    "versions": "Pinned to Expo SDK 51 lines as a sensible starting point. Run `npx expo install --fix` after `npm install` to align native versions, then build a dev client (vision-camera + reanimated need native code, so Expo Go won't work)."
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "CarDex",
+    "slug": "cardex",
+    "scheme": "cardex",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.cardex.app"
+    },
+    "android": {
+      "package": "com.cardex.app"
+    },
+    "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "CarDex uses your camera to catch cars you spot in the wild."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "CarDex tags your catches with where you found them."
+        }
+      ]
+    ]
+  }
+}
