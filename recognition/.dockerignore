@@ -1,0 +1,12 @@
+# Keep build context small + reproducible.
+training/
+data/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+*.md
+requirements-ml.txt
+# NOTE: artifacts/ is intentionally NOT ignored — model.pt + embeddings.npz
+# are copied into the image.

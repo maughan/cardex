@@ -84,6 +84,7 @@ Deno.serve(async (req: Request) => {
   if (lat !== null) upstream.append("lat", String(lat));
   if (lng !== null) upstream.append("lng", String(lng));
   upstream.append("ts", ts);
+  upstream.append("liveCapture", String(liveCapture));
 
   let recRes: Response;
   try {
@@ -100,8 +101,59 @@ Deno.serve(async (req: Request) => {
     return json({ error: "recognition_failed", status: recRes.status }, 502);
   }
 
-  // 5. Pass the verdict + candidates back to the client.
-  //    Shape: { isReal, spoofScore, candidates[], modelVersion, requestId }
+  // 5. The recognition service returns predictions keyed by model_class.
+  //    Resolve them to catalogue candidates via the cars table.
   const result = await recRes.json();
-  return json(result);
+
+  // Rejection (not a real car / spoof / no car) passes straight through.
+  if (!result.isReal) return json(result);
+
+  const predictions: Array<{ modelClass: string; confidence: number }> =
+    Array.isArray(result.predictions) ? result.predictions : [];
+
+  // Back-compat: the mock branch (and any service that already returns
+  // candidates) needs no resolution.
+  if (predictions.length === 0) return json(result);
+
+  const classes = predictions.map((p) => p.modelClass);
+  const { data: cars, error: carErr } = await supabase
+    .from("cars")
+    .select("id, make, model, generation, rarity_tier, model_class")
+    .in("model_class", classes);
+  if (carErr) {
+    return json({ error: "catalogue_lookup_failed", detail: carErr.message }, 500);
+  }
+
+  const byClass = new Map((cars ?? []).map((c) => [c.model_class, c]));
+  const candidates = predictions
+    .map((p) => {
+      const c = byClass.get(p.modelClass);
+      if (!c) return null;
+      const label = `${c.make} ${c.model}${c.generation ? " " + c.generation : ""}`;
+      return {
+        carId: c.id as number,
+        label,
+        confidence: p.confidence,
+        rarityTier: c.rarity_tier as string,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  // Predicted classes exist but none are in the catalogue yet.
+  if (candidates.length === 0) {
+    return json({
+      isReal: false,
+      reason: "no_catalogue_match",
+      candidates: [],
+      requestId: result.requestId,
+    });
+  }
+
+  return json({
+    isReal: true,
+    spoofScore: result.spoofScore,
+    candidates,
+    modelVersion: result.modelVersion,
+    requestId: result.requestId,
+  });
 });

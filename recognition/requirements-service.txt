@@ -1,0 +1,5 @@
+# HTTP service layer (recognition/app.py). Combine with requirements.txt
+# (pillow/numpy) and requirements-ml.txt (torch/timm for the classifier).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

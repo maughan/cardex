@@ -120,6 +120,7 @@ def main() -> None:
     class_to_id = {f: i for i, f in enumerate(all_folders)}
 
     rows, unmatched = [], []
+    folder_meta: dict[str, dict] = {}  # folder -> enrichment for the catalogue
     for split in splits:
         for folder in sorted((data_dir / split).iterdir()):
             if not folder.is_dir():
@@ -130,6 +131,12 @@ def main() -> None:
                 label = f"{make} {model}".strip()
                 body = map_body(row.get("body_style", ""))
                 y0, y1 = clean_year(row.get("from_year")), clean_year(row.get("to_year"))
+                folder_meta[folder.name] = {
+                    "variant": norm(row.get("title", "")),
+                    "segment": norm(row.get("segment", "")),
+                    "description": norm(row.get("description", "")),
+                    "engine": norm(row.get("engine_specs_title", "")),
+                }
             else:
                 if split == splits[0]:
                     unmatched.append(folder.name)
@@ -157,7 +164,13 @@ def main() -> None:
     (out / "classes.json").write_text(json.dumps(class_to_id, indent=2))
     cat = (df.drop_duplicates("folder")
              [["folder", "class_id", "label", "make", "model", "body", "year_start", "year_end", "matched"]]
-             .sort_values("class_id"))
+             .sort_values("class_id")
+             .copy())
+    # Enrich one row per variant with the metadata fields, and expose the folder
+    # as model_class (the stable key the recognition service maps predictions to).
+    for col in ("variant", "segment", "description", "engine"):
+        cat[col] = cat["folder"].map(lambda f: folder_meta.get(f, {}).get(col, ""))
+    cat = cat.rename(columns={"folder": "model_class"})
     cat.to_csv(out / "catalogue.csv", index=False)
     if unmatched:
         (out / "unmatched.txt").write_text("\n".join(unmatched))
