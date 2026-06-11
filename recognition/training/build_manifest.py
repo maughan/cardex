@@ -140,12 +140,18 @@ def fmt_year_range(y0: int | None, y1: int | None) -> str:
 
 
 def key_of(s: str) -> str:
-    """Year-robust join key: drop 4-digit year tokens (handles the folder's year
-    prefix and the title's concatenated year suffix), keep other digits (so 428
-    vs 458, W3, etc. still distinguish), strip everything non-alphanumeric."""
+    """Join key = year-stripped text + the START year.
+
+    Folder names and CSV titles encode the GENERATION via years (folder prefix
+    '2008_...' or suffix '..._20082010'; title suffix '20082010'). Both forms
+    share the same START year, so we strip year tokens for the text part but
+    append min(year) to keep generations distinct. Without the start year, every
+    generation of a model (e.g. all Accords) collapses to one key and they all
+    match a single CSV row -> identical rows differing only by model_class."""
     low = str(s or "").lower()
-    low = re.sub(r"(?:18|19|20)\d{2}", " ", low)   # 1921, and 19661971 -> 1966+1971
-    return re.sub(r"[^a-z0-9]+", "", low)
+    years = re.findall(r"(?:18|19|20)\d{2}", low)
+    text = re.sub(r"[^a-z0-9]+", "", re.sub(r"(?:18|19|20)\d{2}", " ", low))
+    return f"{text}#{min(years) if years else ''}"
 
 
 def prettify(folder: str) -> str:
