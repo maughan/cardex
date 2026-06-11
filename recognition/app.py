@@ -31,15 +31,21 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image
 
 from validation import ClaimedMeta, StubCarDetector, ValidationPipeline, Verdict
-from classifier import MakeModelClassifier
+from validation.detector import crop_to_bbox
+from classifier import MakeModelClassifier, SoftmaxClassifier
 
 app = FastAPI(title="CarDex Recognition", version="1.0")
 
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "local")
 _TOKEN = os.environ.get("RECOGNITION_TOKEN")
 
+# "head" = serve the trained softmax head (the model whose top1/top3 was
+# measured — most accurate). "embedding" = mean-embedding nearest-neighbour
+# (scales to new classes without retraining, but lossier). Default: head.
+CLASSIFIER_MODE = os.environ.get("CLASSIFIER_MODE", "head").lower()
+
 _pipeline: ValidationPipeline
-_classifier: Optional[MakeModelClassifier] = None
+_classifier = None  # SoftmaxClassifier | MakeModelClassifier | None
 
 
 def _build_detector():
@@ -59,11 +65,19 @@ def _startup() -> None:
 
     model_path = os.environ.get("MODEL_PATH", "model.pt")
     emb_path = os.environ.get("EMBEDDINGS_PATH", "embeddings.npz")
-    if os.path.exists(model_path) and os.path.exists(emb_path):
-        _classifier = MakeModelClassifier.from_files(model_path, emb_path)
-        print(f"classifier loaded: {model_path} + {emb_path}")
-    else:
-        print("classifier NOT loaded (artifacts missing) — validation only")
+
+    if CLASSIFIER_MODE == "embedding":
+        if os.path.exists(model_path) and os.path.exists(emb_path):
+            _classifier = MakeModelClassifier.from_files(model_path, emb_path)
+            print(f"classifier loaded [embedding-NN]: {model_path} + {emb_path}")
+        else:
+            print("classifier NOT loaded (model.pt + embeddings.npz missing) — validation only")
+    else:  # "head" (default)
+        if os.path.exists(model_path):
+            _classifier = SoftmaxClassifier.from_file(model_path)
+            print(f"classifier loaded [softmax-head]: {model_path}")
+        else:
+            print(f"classifier NOT loaded ({model_path} missing) — validation only")
 
 
 def _check_auth(authorization: Optional[str]) -> None:
@@ -73,7 +87,14 @@ def _check_auth(authorization: Optional[str]) -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_loaded": _classifier is not None, "modelVersion": MODEL_VERSION}
+    detector = type(_pipeline.detector).__name__ if "_pipeline" in globals() else None
+    return {
+        "status": "ok",
+        "model_loaded": _classifier is not None,
+        "classifier": type(_classifier).__name__ if _classifier else None,
+        "detector": detector,            # "YoloCarDetector" = presence gate live
+        "modelVersion": MODEL_VERSION,
+    }
 
 
 @app.post("/v1/recognize")
@@ -109,10 +130,13 @@ async def recognize(
             "requestId": request_id,
         }
 
-    # 2. Classify.
+    # 2. Classify — on the detected car crop (matches the tight training
+    #    framing). Falls back to the full image when there is no bbox (stub
+    #    detector, or a box wasn't returned).
     if _classifier is None:
         raise HTTPException(status_code=503, detail="classifier_not_loaded")
-    candidates = _classifier.classify(img, k=5)
+    crop = crop_to_bbox(img, result.bbox)
+    candidates = _classifier.classify(crop, k=5)
 
     return {
         "isReal": True,

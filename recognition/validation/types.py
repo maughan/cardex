@@ -37,6 +37,10 @@ class ValidationResult:
     flagged: bool = False                  # accepted but logged for review
     signals: list[SignalResult] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    # Detected car box (x, y, w, h) when the presence gate found one — used to
+    # crop the image to the car before make/model classification, so inference
+    # framing matches the tight training crops.
+    bbox: Optional[tuple[int, int, int, int]] = None
 
     def to_dict(self) -> dict:
         return {

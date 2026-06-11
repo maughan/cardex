@@ -65,6 +65,34 @@ def norm_brand(s: str) -> str:
     )
 
 
+def _alnum(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def strip_make_prefix(model: str, brand: str) -> str:
+    """The dataset's `model` is brand-prefixed in caps ('HONDA Civic',
+    'MERCEDES BENZ E-Klasse'). Drop the leading brand tokens so the catalogue
+    stores just 'Civic' / 'E-Klasse' and the app shows 'Honda Civic' once.
+
+    Matches the brand ignoring case/spacing/hyphens; only strips when the
+    leading word(s) fully equal the brand, and never returns empty."""
+    brand_key = _alnum(brand)
+    if not brand_key:
+        return model
+    words = model.split()
+    acc, take = "", 0
+    for i, w in enumerate(words):
+        acc += _alnum(w)
+        if acc == brand_key:
+            take = i + 1
+            break
+        if not brand_key.startswith(acc):
+            break  # diverged — model doesn't start with the brand
+    if take == 0 or take >= len(words):
+        return model  # no match, or stripping would empty it
+    return " ".join(words[take:])
+
+
 def map_body(s: str) -> str:
     low = norm(s).lower()
     for key, val in BODY_MAP.items():
@@ -79,6 +107,36 @@ def clean_year(v) -> int | None:
     except (TypeError, ValueError):
         return None
     return y if 1885 <= y <= 2035 else None
+
+
+def parse_production_years(v) -> tuple[int | None, int | None]:
+    """Parse the dataset's `production_years` (the meaningful field) into a
+    (start, end) pair. Handles ranges ("1993-2002"), single years ("1986"),
+    and ongoing production ("2019-present"). from_year/to_year are NOT reliable
+    in this dataset, so this is the source of truth for years.
+
+    end is None when production is ongoing (present/current/now/trailing dash)."""
+    if v is None:
+        return (None, None)
+    s = str(v)
+    years = [int(y) for y in re.findall(r"(?:18|19|20)\d{2}", s)]
+    years = [y for y in years if 1885 <= y <= 2035]
+    if not years:
+        return (None, None)
+    start = min(years)
+    ongoing = re.search(r"present|current|now|today|[–-]\s*$", s, re.IGNORECASE)
+    end = None if ongoing else max(years)
+    return (start, end)
+
+
+def fmt_year_range(y0: int | None, y1: int | None) -> str:
+    """Compact, human-friendly range for display: '1966–1971', '1986', or
+    '2019–present'. (production_years in the dataset is a verbose comma list.)"""
+    if y0 is None:
+        return ""
+    if y1 is None:
+        return f"{y0}–present"
+    return str(y0) if y0 == y1 else f"{y0}–{y1}"
 
 
 def key_of(s: str) -> str:
@@ -127,15 +185,23 @@ def main() -> None:
                 continue
             row = meta_by_key.get(key_of(folder.name))
             if row is not None:
-                make = norm_brand(row["brand"]); model = norm(row["model"])
+                make = norm_brand(row["brand"])
+                model = strip_make_prefix(norm(row["model"]), row["brand"])
                 label = f"{make} {model}".strip()
                 body = map_body(row.get("body_style", ""))
-                y0, y1 = clean_year(row.get("from_year")), clean_year(row.get("to_year"))
+                # production_years is the meaningful field; from_year/to_year are
+                # unreliable in this dataset. Fall back to them only if needed.
+                y0, y1 = parse_production_years(row.get("production_years"))
+                if y0 is None:
+                    y0, y1 = clean_year(row.get("from_year")), clean_year(row.get("to_year"))
                 folder_meta[folder.name] = {
                     "variant": norm(row.get("title", "")),
                     "segment": norm(row.get("segment", "")),
                     "description": norm(row.get("description", "")),
                     "engine": norm(row.get("engine_specs_title", "")),
+                    # Compact range for display; numeric year_start/year_end (above)
+                    # drive set logic.
+                    "production_years": fmt_year_range(y0, y1),
                 }
             else:
                 if split == splits[0]:
@@ -168,7 +234,7 @@ def main() -> None:
              .copy())
     # Enrich one row per variant with the metadata fields, and expose the folder
     # as model_class (the stable key the recognition service maps predictions to).
-    for col in ("variant", "segment", "description", "engine"):
+    for col in ("variant", "segment", "description", "engine", "production_years"):
         cat[col] = cat["folder"].map(lambda f: folder_meta.get(f, {}).get(col, ""))
     cat = cat.rename(columns={"folder": "model_class"})
     cat.to_csv(out / "catalogue.csv", index=False)

@@ -3,6 +3,7 @@ import { Text } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { CaptureScreen } from "../screens/CaptureScreen";
 import { GarageStack } from "./GarageStack";
+import { ContributeScreen } from "../screens/ContributeScreen";
 import { MapScreen } from "../screens/MapScreen";
 import { ProfileScreen } from "../screens/ProfileScreen";
 import { C } from "../theme/colors";
@@ -44,6 +45,11 @@ export function createBottomTabs() {
           name="Garage"
           component={GarageStack}
           options={{ headerShown: false, tabBarIcon: tabIcon("▦") }}
+        />
+        <Tab.Screen
+          name="Add"
+          component={ContributeScreen}
+          options={{ tabBarIcon: tabIcon("＋") }}
         />
         <Tab.Screen
           name="Map"

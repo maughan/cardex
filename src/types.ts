@@ -20,6 +20,8 @@ export interface RecognizeResult {
   candidates: Candidate[];
   modelVersion?: string;
   requestId?: string;
+  imagePath?: string | null; // training_images object key, if the capture was retained
+  retained?: boolean; // whether the capture image was kept (consent)
 }
 
 export interface CardPayload {

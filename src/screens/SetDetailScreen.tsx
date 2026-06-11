@@ -2,6 +2,7 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -20,7 +21,7 @@ import { rarityColor } from "../lib/rarity";
 
 type Props = NativeStackScreenProps<GarageStackParamList, "SetDetail">;
 
-export function SetDetailScreen({ route }: Props) {
+export function SetDetailScreen({ route, navigation }: Props) {
   const { slug, name } = route.params;
   const [cars, setCars] = useState<SetCarEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,13 +97,18 @@ export function SetDetailScreen({ route }: Props) {
         </View>
       }
       renderItem={({ item }) => (
-        <PixelCard
-          label={item.label}
-          rarityTier={item.rarityTier}
-          spriteUrl={item.spriteUrl}
-          locked={!item.caught}
+        <Pressable
           style={styles.card}
-        />
+          onPress={() => navigation.navigate("CarDetail", { carId: item.carId })}
+        >
+          <PixelCard
+            label={item.label}
+            rarityTier={item.rarityTier}
+            spriteUrl={item.spriteUrl}
+            locked={!item.caught}
+            style={styles.cardFill}
+          />
+        </Pressable>
       )}
     />
   );
@@ -126,4 +132,5 @@ const styles = StyleSheet.create({
   badge: { width: 72 },
   error: { fontFamily: F.body, color: C.red, fontSize: 15, marginBottom: 8 },
   card: { flex: 1 / 3 },
+  cardFill: { width: "100%" },
 });

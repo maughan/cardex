@@ -5,17 +5,32 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { fetchProfileStats, type ProfileStats } from "../lib/collection";
+import {
+  type Achievement,
+  fetchAchievements,
+  fetchProfileStats,
+  fetchShareTrainingImages,
+  setShareTrainingImages,
+  type ProfileStats,
+} from "../lib/collection";
 import { RARITY_LABEL, RARITY_ORDER, rarityColor } from "../lib/rarity";
 import { useAuth } from "../context/AuthProvider";
 import { C } from "../theme/colors";
 import { F } from "../theme/type";
 import { Frame } from "../components/ui/Frame";
 import { PixelProgressBar } from "../components/ui/PixelProgressBar";
+import { Badge } from "../components/ui/Badge";
+
+const TIER_COLOR: Record<string, string> = {
+  bronze: C.orange,
+  silver: C.line,
+  gold: C.gold,
+};
 
 export function ProfileScreen() {
   const { session, signOut } = useAuth();
@@ -23,6 +38,9 @@ export function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shareImages, setShareImages] = useState(false);
+  const [savingShare, setSavingShare] = useState(false);
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
 
   const email = session?.user?.email ?? "TRAINER";
   const handle = email.split("@")[0].toUpperCase();
@@ -31,12 +49,32 @@ export function ProfileScreen() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      setStats(await fetchProfileStats());
+      const [s, share, ach] = await Promise.all([
+        fetchProfileStats(),
+        fetchShareTrainingImages(),
+        fetchAchievements(),
+      ]);
+      setStats(s);
+      setShareImages(share);
+      setAchievements(ach);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't load your profile");
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }, []);
+
+  const onToggleShare = useCallback(async (value: boolean) => {
+    setShareImages(value); // optimistic
+    setSavingShare(true);
+    try {
+      await setShareTrainingImages(value);
+    } catch (e) {
+      setShareImages(!value); // revert on failure
+      setError(e instanceof Error ? e.message : "Couldn't update preference");
+    } finally {
+      setSavingShare(false);
     }
   }, []);
 
@@ -130,6 +168,48 @@ export function ProfileScreen() {
         </>
       )}
 
+      {/* Badges */}
+      <Text style={styles.sectionTitle}>BADGES</Text>
+      <Frame style={styles.badgesRow}>
+        {(() => {
+          const contrib = achievements.filter((a) => a.kind === "contributor");
+          const tier = ["gold", "silver", "bronze"].find((t) =>
+            contrib.some((a) => a.tier === t),
+          );
+          return (
+            <Badge
+              label={tier ? `CONTRIBUTOR ${tier.toUpperCase()}` : "CONTRIBUTOR"}
+              earned={!!tier}
+              color={tier ? TIER_COLOR[tier] : C.gold}
+            />
+          );
+        })()}
+        {achievements.length === 0 && (
+          <Text style={styles.badgeHint}>
+            Add a car under the ＋ tab to earn your first badge.
+          </Text>
+        )}
+      </Frame>
+
+      {/* Settings */}
+      <Text style={styles.sectionTitle}>SETTINGS</Text>
+      <Frame style={styles.settingRow}>
+        <View style={styles.settingText}>
+          <Text style={styles.settingLabel}>SHARE CATCH PHOTOS</Text>
+          <Text style={styles.settingHint}>
+            Help improve recognition. Your confirmed catches are used to train
+            the model. Off by default.
+          </Text>
+        </View>
+        <Switch
+          value={shareImages}
+          onValueChange={onToggleShare}
+          disabled={savingShare}
+          trackColor={{ false: C.line, true: C.accent }}
+          thumbColor={C.text}
+        />
+      </Frame>
+
       <Pressable style={styles.signout} onPress={signOut}>
         <Text style={styles.signoutText}>SIGN OUT</Text>
       </Pressable>
@@ -207,6 +287,14 @@ const styles = StyleSheet.create({
   rarestTier: { fontFamily: F.display, fontSize: 7, letterSpacing: 1 },
 
   muted: { fontFamily: F.body, color: C.textDim, fontSize: 16 },
+
+  badgesRow: { flexDirection: "row", alignItems: "center", gap: 16, flexWrap: "wrap" },
+  badgeHint: { flex: 1, fontFamily: F.body, color: C.textDim, fontSize: 14, lineHeight: 19 },
+
+  settingRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  settingText: { flex: 1 },
+  settingLabel: { fontFamily: F.display, color: C.text, fontSize: 8, letterSpacing: 1 },
+  settingHint: { fontFamily: F.body, color: C.textDim, fontSize: 14, marginTop: 4, lineHeight: 19 },
 
   signout: { alignItems: "center", paddingVertical: 14, marginTop: 4 },
   signoutText: { fontFamily: F.display, color: C.red, fontSize: 7, letterSpacing: 1 },

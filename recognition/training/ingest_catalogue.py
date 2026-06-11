@@ -96,7 +96,7 @@ def main() -> None:
     ]
 
     cols = ("make, model, generation, year_start, year_end, body, rarity_tier, "
-            "segment, description, engine, variant, model_class")
+            "segment, description, engine, variant, model_class, production_years")
     skipped = 0
     for _, r in df.iterrows():
         def cell(key: str) -> str:
@@ -122,10 +122,11 @@ def main() -> None:
             sql_str(body),
             f"'{tier}'",
             sql_str(r.get("segment")),
-            sql_str(r.get("description"), maxlen=600),
+            sql_str(r.get("description")),     # full text — column is unlimited `text`
             sql_str(r.get("engine")),
             sql_str(r.get("variant")),
             sql_str(r.get("model_class")),
+            sql_str(r.get("production_years")),
         ])
         lines.append(
             f"insert into cars ({cols})\nvalues ({values})\n"
@@ -133,7 +134,8 @@ def main() -> None:
             "  make=excluded.make, model=excluded.model, year_start=excluded.year_start,\n"
             "  year_end=excluded.year_end, body=excluded.body, rarity_tier=excluded.rarity_tier,\n"
             "  segment=excluded.segment, description=excluded.description,\n"
-            "  engine=excluded.engine, variant=excluded.variant;"
+            "  engine=excluded.engine, variant=excluded.variant,\n"
+            "  production_years=excluded.production_years;"
         )
 
     # Placeholder sprite per car (real art is non-blocking).

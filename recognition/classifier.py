@@ -109,3 +109,58 @@ class MakeModelClassifier:
 
     def classify(self, img: Image.Image, k: int = 3) -> list[Candidate]:
         return self.index.query(self.encoder.encode(img), k)
+
+
+class SoftmaxClassifier:
+    """Serves the trained softmax HEAD directly — i.e. the exact model whose
+    top-1/top-3 was measured during training. This is more accurate than the
+    mean-embedding nearest-neighbour path; the embedding path exists for the
+    future "add classes without retraining" / pgvector route.
+
+    `score` is the softmax probability (0..1).
+    """
+
+    def __init__(self, model_path: str, img_size: int = 224, device: Optional[str] = None) -> None:
+        try:
+            import torch
+            import timm
+            from torchvision import transforms
+        except ImportError as e:
+            raise ImportError(
+                "SoftmaxClassifier needs torch + timm + torchvision "
+                "(pip install -r requirements-ml.txt)"
+            ) from e
+
+        self._torch = torch
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        ckpt = torch.load(model_path, map_location="cpu")
+        self.model = timm.create_model(
+            ckpt["backbone"], pretrained=False, num_classes=ckpt["num_classes"]
+        )
+        self.model.load_state_dict(ckpt["state_dict"])
+        self.model.eval().to(self.device)
+
+        class_to_id = ckpt["class_to_id"]
+        self._id_to_label = {v: k for k, v in class_to_id.items()}
+        self.tf = transforms.Compose([
+            transforms.Resize(int(img_size * 1.15)),
+            transforms.CenterCrop(img_size),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+
+    @classmethod
+    def from_file(cls, model_path: str) -> "SoftmaxClassifier":
+        return cls(model_path)
+
+    def classify(self, img: Image.Image, k: int = 5) -> list[Candidate]:
+        torch = self._torch
+        x = self.tf(img.convert("RGB")).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            probs = torch.softmax(self.model(x), dim=1).squeeze(0)
+            k = min(k, probs.numel())
+            top = torch.topk(probs, k)
+        return [
+            Candidate(self._id_to_label[int(i)], float(p))
+            for p, i in zip(top.values.cpu(), top.indices.cpu())
+        ]

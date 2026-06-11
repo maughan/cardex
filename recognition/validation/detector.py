@@ -35,11 +35,27 @@ class StubCarDetector:
         return CarDetection(present=None, confidence=0.0, bbox=None)
 
 
+def crop_to_bbox(
+    img: Image.Image,
+    bbox: Optional[tuple[int, int, int, int]],
+    margin: float = 0.12,
+) -> Image.Image:
+    """Crop to a (x, y, w, h) box, expanded by `margin` on each side so a tight
+    detector box doesn't clip bumpers/roof. Returns the original if no box."""
+    if bbox is None:
+        return img
+    x, y, w, h = bbox
+    mx, my = int(w * margin), int(h * margin)
+    left = max(0, x - mx)
+    top = max(0, y - my)
+    right = min(img.width, x + w + mx)
+    bottom = min(img.height, y + h + my)
+    if right <= left or bottom <= top:
+        return img
+    return img.crop((left, top, right, bottom))
+
+
 def crop_to_detection(img: Image.Image, det: CarDetection) -> Image.Image:
     """Tight crop to the detected car (for the classifier / spoof checks).
     Returns the original image if there is no bbox."""
-    if det.bbox is None:
-        return img
-    x, y, w, h = det.bbox
-    x, y = max(0, x), max(0, y)
-    return img.crop((x, y, x + w, y + h))
+    return crop_to_bbox(img, det.bbox, margin=0.0)

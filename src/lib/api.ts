@@ -65,6 +65,9 @@ export interface ConfirmInput {
   guesses?: Candidate[];
   modelVersion?: string;
   spoofScore?: number;
+  requestId?: string;
+  imagePath?: string | null;
+  retained?: boolean;
 }
 
 // Record the confirmed catch + log the attempt for the training flywheel.
@@ -79,4 +82,67 @@ export async function confirmCatch(input: ConfirmInput): Promise<ConfirmResult> 
   });
   if (!res.ok) throw new Error(`confirm-catch failed (${res.status})`);
   return (await res.json()) as ConfirmResult;
+}
+
+// --- Community car submissions ----------------------------------------------
+
+export interface SubmitCarInput {
+  make: string;
+  model: string;
+  generation?: string;
+  yearStart?: number;
+  yearEnd?: number;
+  body?: string;
+  imagePaths: string[];
+}
+
+export interface SubmitCarResult {
+  submissionId: number;
+  status: string;
+  imageCount: number;
+  possibleDuplicates: Array<{
+    id: number;
+    make: string;
+    model: string;
+    year_start: number | null;
+    year_end: number | null;
+  }>;
+}
+
+// Upload the captured photos to the private `submissions` bucket, under the
+// user's own uid/ folder (the storage policy enforces this). Returns the object
+// keys to pass to submitCar.
+export async function uploadSubmissionImages(localUris: string[]): Promise<string[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) throw new Error("Not signed in");
+
+  const folder = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const paths: string[] = [];
+  for (let i = 0; i < localUris.length; i++) {
+    const raw = localUris[i];
+    const uri = raw.startsWith("file://") ? raw : `file://${raw}`;
+    const arrayBuffer = await (await fetch(uri)).arrayBuffer();
+    const path = `${uid}/${folder}/${i}.jpg`;
+    const { error } = await supabase.storage
+      .from("submissions")
+      .upload(path, arrayBuffer, { contentType: "image/jpeg", upsert: true });
+    if (error) throw new Error(error.message || "Image upload failed");
+    paths.push(path);
+  }
+  return paths;
+}
+
+// Record the submission (after images are uploaded). Lands as `pending`.
+export async function submitCar(input: SubmitCarInput): Promise<SubmitCarResult> {
+  const res = await fetch(`${FUNCTIONS_URL}/submit-car`, {
+    method: "POST",
+    headers: {
+      Authorization: await authHeader(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(`submit failed (${res.status})`);
+  return (await res.json()) as SubmitCarResult;
 }

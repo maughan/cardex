@@ -78,6 +78,9 @@ export function useCatchFlow() {
           guesses: ctx.result?.candidates,
           modelVersion: ctx.result?.modelVersion,
           spoofScore: ctx.result?.spoofScore,
+          requestId: ctx.result?.requestId,
+          imagePath: ctx.result?.imagePath,
+          retained: ctx.result?.retained,
         });
         setState({ status: "reveal", result: confirmRes });
       } catch (e) {

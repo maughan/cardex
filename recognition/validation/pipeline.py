@@ -112,4 +112,5 @@ class ValidationPipeline:
         return ValidationResult(
             verdict=Verdict.ACCEPT, is_real=True, suspicion=suspicion,
             flagged=flagged, signals=signals, reasons=reasons,
+            bbox=det.bbox,           # crop hint for the classifier (None if stub)
         )

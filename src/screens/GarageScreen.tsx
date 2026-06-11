@@ -113,14 +113,19 @@ export function GarageScreen() {
         </Text>
       }
       renderItem={({ item, index }) => (
-        <PixelCard
-          dexNumber={index + 1}
-          label={item.label}
-          rarityTier={item.rarityTier}
-          spriteUrl={item.spriteUrl}
-          spottedCount={item.spottedCount}
+        <Pressable
           style={styles.card}
-        />
+          onPress={() => navigation.navigate("CarDetail", { carId: item.carId, dexNumber: index + 1 })}
+        >
+          <PixelCard
+            dexNumber={index + 1}
+            label={item.label}
+            rarityTier={item.rarityTier}
+            spriteUrl={item.spriteUrl}
+            spottedCount={item.spottedCount}
+            style={styles.cardFill}
+          />
+        </Pressable>
       )}
     />
   );
@@ -178,4 +183,5 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   card: { flex: 1 / 3 },
+  cardFill: { width: "100%" },
 });

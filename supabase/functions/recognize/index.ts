@@ -15,12 +15,13 @@
 // =============================================================================
 
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { getUserId, userClient } from "../_shared/clients.ts";
+import { getUserId, serviceClient, userClient } from "../_shared/clients.ts";
 import { mockRecognize } from "../_shared/mockRecognition.ts";
 
 const RECOGNITION_URL = Deno.env.get("RECOGNITION_URL")!;
 const RECOGNITION_TOKEN = Deno.env.get("RECOGNITION_TOKEN")!;
 const MOCK = Deno.env.get("MOCK_RECOGNITION") === "true";
+const TRAINING_BUCKET = "training_images";
 
 function validCoord(lat: number | null, lng: number | null): boolean {
   if (lat === null || lng === null) return true; // coordinates are optional
@@ -61,6 +62,11 @@ Deno.serve(async (req: Request) => {
   if (!(image instanceof File)) {
     return json({ error: "missing_image" }, 400);
   }
+  // Read the bytes once, up front: we reuse them for the upstream forward AND
+  // (only on consent + a real car) the training-image upload. Reading after the
+  // forward consumes the stream, so capture them now.
+  const imageBytes = new Uint8Array(await image.arrayBuffer());
+  const imageType = image.type || "image/jpeg";
 
   const latRaw = form.get("lat");
   const lngRaw = form.get("lng");
@@ -80,7 +86,11 @@ Deno.serve(async (req: Request) => {
 
   // 4. Forward to the recognition service (image stays transient)
   const upstream = new FormData();
-  upstream.append("image", image, image.name || "capture.jpg");
+  upstream.append(
+    "image",
+    new Blob([imageBytes], { type: imageType }),
+    image.name || "capture.jpg",
+  );
   if (lat !== null) upstream.append("lat", String(lat));
   if (lng !== null) upstream.append("lng", String(lng));
   upstream.append("ts", ts);
@@ -149,11 +159,41 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Opt-in training-image retention. Best-effort — a failure here must never
+  // fail the recognition. Only runs when the user consented (off by default)
+  // and only on a real car (we don't keep rejected/non-car frames).
+  const requestId = (result.requestId as string | undefined) ?? crypto.randomUUID();
+  let imagePath: string | null = null;
+  let retained = false;
+  try {
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("share_training_images")
+      .eq("id", userId)
+      .maybeSingle();
+    if (prof?.share_training_images) {
+      const path = `${userId}/${requestId}.jpg`;
+      const { error: upErr } = await serviceClient().storage
+        .from(TRAINING_BUCKET)
+        .upload(path, imageBytes, { contentType: imageType, upsert: true });
+      if (upErr) {
+        console.error("training image upload failed:", upErr.message);
+      } else {
+        imagePath = path;
+        retained = true;
+      }
+    }
+  } catch (e) {
+    console.error("retention error:", e instanceof Error ? e.message : String(e));
+  }
+
   return json({
     isReal: true,
     spoofScore: result.spoofScore,
     candidates,
     modelVersion: result.modelVersion,
-    requestId: result.requestId,
+    requestId,
+    imagePath,
+    retained,
   });
 });

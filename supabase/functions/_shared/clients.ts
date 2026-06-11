@@ -26,3 +26,14 @@ export async function getUserId(client: SupabaseClient): Promise<string | null> 
   if (error || !data.user) return null;
   return data.user.id;
 }
+
+// Service-role client — bypasses RLS. Use ONLY for trusted server-side writes
+// the user can't do directly (e.g. uploading to the private training_images
+// bucket). Never expose its results to the caller beyond what they may see.
+export function serviceClient(): SupabaseClient {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  );
+}

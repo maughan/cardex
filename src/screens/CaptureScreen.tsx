@@ -11,6 +11,12 @@ import {
   useCameraDevice,
   useCameraPermission,
 } from "react-native-vision-camera";
+import Reanimated, {
+  useAnimatedProps,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useCatchFlow } from "../hooks/useCatchFlow";
 import { ConfirmSheet } from "../components/ConfirmSheet";
 import { CatalogueSearch } from "../components/CatalogueSearch";
@@ -24,6 +30,12 @@ import { F } from "../theme/type";
 import { Frame } from "../components/ui/Frame";
 import { PixelButton } from "../components/ui/PixelButton";
 
+// Vision-camera's `zoom` driven by a Reanimated shared value (smooth pinch).
+const ReanimatedCamera = Reanimated.createAnimatedComponent(Camera);
+Reanimated.addWhitelistedNativeProps({ zoom: true });
+const ZOOM_LEVELS = [1, 2, 5];      // multiples of the lens's neutral zoom
+const MAX_ZOOM_CAP = 10;            // ignore extreme digital zoom the device reports
+
 export function CaptureScreen() {
   const device = useCameraDevice("back");
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -32,6 +44,46 @@ export function CaptureScreen() {
   const [shooting, setShooting] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [celebrating, setCelebrating] = useState<CompletedSet[] | null>(null);
+
+  // --- Zoom -----------------------------------------------------------------
+  const minZoom = device?.minZoom ?? 1;
+  const neutralZoom = device?.neutralZoom ?? 1;
+  const maxZoom = Math.min(device?.maxZoom ?? 1, MAX_ZOOM_CAP);
+
+  const zoom = useSharedValue(neutralZoom);
+  const zoomStart = useSharedValue(neutralZoom);
+  const [zoomMult, setZoomMult] = useState(1);
+
+  // Re-baseline when the device becomes available / changes.
+  useEffect(() => {
+    zoom.value = neutralZoom;
+    setZoomMult(1);
+  }, [neutralZoom, zoom]);
+
+  const animatedProps = useAnimatedProps(() => ({ zoom: zoom.value }), [zoom]);
+
+  const pinch = Gesture.Pinch()
+    .onBegin(() => {
+      zoomStart.value = zoom.value;
+    })
+    .onUpdate((e) => {
+      const z = zoomStart.value * e.scale;
+      zoom.value = Math.min(Math.max(z, minZoom), maxZoom);
+    });
+
+  const setZoom = useCallback(
+    (mult: number) => {
+      const target = Math.min(Math.max(neutralZoom * mult, minZoom), maxZoom);
+      zoom.value = withTiming(target, { duration: 180 });
+      setZoomMult(mult);
+    },
+    [neutralZoom, minZoom, maxZoom, zoom],
+  );
+
+  // Only show level buttons the lens can actually reach.
+  const zoomLevels = ZOOM_LEVELS.filter(
+    (m) => m === 1 || neutralZoom * m <= maxZoom + 0.001,
+  );
 
   const pickManual = useCallback(
     (car: CatalogueCar) => {
@@ -179,27 +231,51 @@ export function CaptureScreen() {
 
   return (
     <View style={styles.fill}>
-      <Camera
-        ref={camera}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={state.status === "idle"}
-        photo
-      />
+      <GestureDetector gesture={pinch}>
+        <ReanimatedCamera
+          ref={camera}
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={state.status === "idle"}
+          photo
+          animatedProps={animatedProps}
+        />
+      </GestureDetector>
 
       {reticle}
 
       {state.status === "idle" && (
-        <View style={styles.shutterBar}>
-          {devSimulate}
-          <Pressable
-            style={({ pressed }) => [styles.shutter, pressed && styles.shutterPressed]}
-            onPress={shoot}
-            disabled={shooting}
-          >
-            <View style={styles.shutterInner} />
-          </Pressable>
-        </View>
+        <>
+          {devSimulate && <View style={styles.devBtnFloat}>{devSimulate}</View>}
+
+          <View style={styles.zoomBar}>
+            {zoomLevels.map((m) => {
+              const active = zoomMult === m;
+              return (
+                <Pressable
+                  key={m}
+                  onPress={() => setZoom(m)}
+                  style={[styles.zoomBtn, active && styles.zoomBtnActive]}
+                  hitSlop={6}
+                >
+                  <Text style={[styles.zoomText, active && styles.zoomTextActive]}>
+                    {m}×
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.shutterBar}>
+            <Pressable
+              style={({ pressed }) => [styles.shutter, pressed && styles.shutterPressed]}
+              onPress={shoot}
+              disabled={shooting}
+            >
+              <View style={styles.shutterInner} />
+            </Pressable>
+          </View>
+        </>
       )}
 
       {overlays}
@@ -262,6 +338,33 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     opacity: 0.85,
   },
+
+  // Zoom controls
+  zoomBar: {
+    position: "absolute",
+    bottom: 150,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 10,
+  },
+  zoomBtn: {
+    minWidth: 40,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 2,
+    borderWidth: 2,
+    borderColor: C.line,
+    backgroundColor: "rgba(15,18,28,0.65)",
+    alignItems: "center",
+  },
+  zoomBtnActive: {
+    borderColor: C.accent,
+    backgroundColor: "rgba(15,18,28,0.85)",
+  },
+  zoomText: { fontFamily: F.display, fontSize: 8, color: C.textDim, letterSpacing: 1 },
+  zoomTextActive: { color: C.accent },
 
   // Shutter
   shutterBar: { position: "absolute", bottom: 52, left: 0, right: 0, alignItems: "center", gap: 14 },
@@ -341,6 +444,7 @@ const styles = StyleSheet.create({
   },
 
   // Dev simulate
+  devBtnFloat: { position: "absolute", top: 60, right: 16 },
   devBtn: {
     borderWidth: 1,
     borderColor: C.gold,

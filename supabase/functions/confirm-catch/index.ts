@@ -22,6 +22,9 @@ interface ConfirmBody {
   guesses?: unknown; // raw ranked candidates, stored for training
   modelVersion?: string;
   spoofScore?: number;
+  requestId?: string; // links to the recognize call / retained image
+  imagePath?: string; // object key in training_images (set only if retained)
+  retained?: boolean; // whether the capture image was kept (consent)
 }
 
 interface CatchRow {
@@ -85,6 +88,9 @@ Deno.serve(async (req: Request) => {
     was_corrected: wasCorrected,
     model_version: body.modelVersion ?? null,
     spoof_score: body.spoofScore ?? null,
+    request_id: body.requestId ?? null,
+    image_path: body.imagePath ?? null,
+    retained: body.retained ?? false,
   });
   if (logErr) console.error("recognition_logs insert failed:", logErr.message);
 

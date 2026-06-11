@@ -4,4 +4,5 @@
 export type GarageStackParamList = {
   GarageHome: undefined;
   SetDetail: { slug: string; name: string };
+  CarDetail: { carId: number; dexNumber?: number };
 };

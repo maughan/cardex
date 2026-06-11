@@ -93,6 +93,10 @@ export interface CatalogueCar {
   carId: number;
   label: string;
   rarityTier: RarityTier;
+  yearStart: number | null;
+  yearEnd: number | null;
+  body: string | null;
+  productionYears: string | null; // raw, meaningful range string for display
 }
 
 export interface SetCarEntry {
@@ -283,7 +287,7 @@ export async function searchCars(query: string): Promise<CatalogueCar[]> {
 
   let req = supabase
     .from("cars")
-    .select("id, make, model, generation, rarity_tier")
+    .select("id, make, model, generation, rarity_tier, year_start, year_end, body, production_years")
     .order("make")
     .order("model")
     .limit(40);
@@ -306,9 +310,204 @@ export async function searchCars(query: string): Promise<CatalogueCar[]> {
     model: string;
     generation: string | null;
     rarity_tier: RarityTier;
+    year_start: number | null;
+    year_end: number | null;
+    body: string | null;
+    production_years: string | null;
   }>).map((c) => ({
     carId: c.id,
     label: `${c.make} ${c.model}${c.generation ? " " + c.generation : ""}`,
     rarityTier: c.rarity_tier,
+    yearStart: c.year_start,
+    yearEnd: c.year_end,
+    body: c.body,
+    productionYears: c.production_years,
   }));
+}
+
+// --- Training-image consent --------------------------------------------------
+
+// Whether the user has opted in to sharing catch photos as training data.
+export async function fetchShareTrainingImages(): Promise<boolean> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return false;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("share_training_images")
+    .eq("id", uid)
+    .maybeSingle();
+  if (error) {
+    console.error("fetchShareTrainingImages failed:", error);
+    return false;
+  }
+  return Boolean(data?.share_training_images);
+}
+
+export interface CarDetail {
+  carId: number;
+  make: string;
+  model: string;
+  generation: string | null;
+  variant: string | null;
+  description: string | null;
+  engine: string | null;
+  segment: string | null;
+  body: string | null;
+  yearStart: number | null;
+  yearEnd: number | null;
+  productionYears: string | null;
+  rarityTier: RarityTier;
+  modelClass: string | null;
+  spriteUrl: string | null;
+  // user catch state
+  caught: boolean;
+  spottedCount: number;
+  firstCaughtAt: string | null;
+  lastCaughtAt: string | null;
+  bestConfidence: number | null;
+  lastLat: number | null;
+  lastLng: number | null;
+}
+
+export async function fetchCarDetail(carId: number): Promise<CarDetail> {
+  const { data: car, error } = await supabase
+    .from("cars")
+    .select(
+      "id, make, model, generation, variant, description, engine, segment, body, " +
+      "year_start, year_end, production_years, rarity_tier, model_class",
+    )
+    .eq("id", carId)
+    .single();
+  if (error || !car) throw new Error(error?.message || "Car not found");
+  const c = car as Record<string, unknown>;
+
+  const { data: sprite } = await supabase
+    .from("sprites")
+    .select("asset_url")
+    .eq("car_id", carId)
+    .eq("is_current", true)
+    .maybeSingle();
+
+  // RLS scopes catches to the current user, so this is "did I catch it".
+  const { data: caught } = await supabase
+    .from("catches")
+    .select("spotted_count, first_caught_at, last_caught_at, best_confidence, last_lat, last_lng")
+    .eq("car_id", carId)
+    .maybeSingle();
+  const k = caught as Record<string, unknown> | null;
+
+  return {
+    carId: c.id as number,
+    make: c.make as string,
+    model: c.model as string,
+    generation: (c.generation as string) ?? null,
+    variant: (c.variant as string) ?? null,
+    description: (c.description as string) ?? null,
+    engine: (c.engine as string) ?? null,
+    segment: (c.segment as string) ?? null,
+    body: (c.body as string) ?? null,
+    yearStart: (c.year_start as number) ?? null,
+    yearEnd: (c.year_end as number) ?? null,
+    productionYears: (c.production_years as string) ?? null,
+    rarityTier: c.rarity_tier as RarityTier,
+    modelClass: (c.model_class as string) ?? null,
+    spriteUrl: (sprite?.asset_url as string) ?? null,
+    caught: !!k,
+    spottedCount: (k?.spotted_count as number) ?? 0,
+    firstCaughtAt: (k?.first_caught_at as string) ?? null,
+    lastCaughtAt: (k?.last_caught_at as string) ?? null,
+    bestConfidence: (k?.best_confidence as number) ?? null,
+    lastLat: (k?.last_lat as number) ?? null,
+    lastLng: (k?.last_lng as number) ?? null,
+  };
+}
+
+export interface SimilarCar {
+  carId: number;
+  label: string;
+  yearStart: number | null;
+  yearEnd: number | null;
+  productionYears: string | null;
+}
+
+// Targeted dedupe for the contribute flow: cars matching BOTH make and model.
+export async function fetchSimilarCars(make: string, model: string): Promise<SimilarCar[]> {
+  const m = make.replace(/[%,()*\\]/g, "").trim();
+  const md = model.replace(/[%,()*\\]/g, "").trim();
+  if (!m || !md) return [];
+  const { data, error } = await supabase
+    .from("cars")
+    .select("id, make, model, generation, year_start, year_end, production_years")
+    .ilike("make", `%${m}%`)
+    .ilike("model", `%${md}%`)
+    .limit(6);
+  if (error) {
+    console.error("fetchSimilarCars failed:", error);
+    return [];
+  }
+  return (data ?? []).map((c) => {
+    const r = c as {
+      id: number; make: string; model: string; generation: string | null;
+      year_start: number | null; year_end: number | null; production_years: string | null;
+    };
+    return {
+      carId: r.id,
+      label: `${r.make} ${r.model}${r.generation ? " " + r.generation : ""}`,
+      yearStart: r.year_start,
+      yearEnd: r.year_end,
+      productionYears: r.production_years,
+    };
+  });
+}
+
+// Distinct makes already in the catalogue — for the contribute dropdown.
+export async function fetchMakes(): Promise<string[]> {
+  const { data, error } = await supabase.from("cars").select("make").order("make");
+  if (error) {
+    console.error("fetchMakes failed:", error);
+    return [];
+  }
+  return Array.from(new Set((data ?? []).map((r) => (r as { make: string }).make)));
+}
+
+export interface Achievement {
+  kind: string;
+  tier: string | null;
+  awardedAt: string;
+}
+
+export async function fetchAchievements(): Promise<Achievement[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return [];
+  const { data, error } = await supabase
+    .from("achievements")
+    .select("kind, tier, awarded_at")
+    .eq("user_id", uid)
+    .order("awarded_at");
+  if (error) {
+    console.error("fetchAchievements failed:", error);
+    return [];
+  }
+  return (data ?? []).map((a) => {
+    const r = a as { kind: string; tier: string | null; awarded_at: string };
+    return { kind: r.kind, tier: r.tier, awardedAt: r.awarded_at };
+  });
+}
+
+export async function setShareTrainingImages(value: boolean): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) throw new Error("Not signed in — sign in to change this.");
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ share_training_images: value })
+    .eq("id", uid)
+    .select("id");
+  if (error) throw new Error(error.message || "Couldn't update preference");
+  // No row updated = the profile doesn't exist (apply migration 0007).
+  if (!data || data.length === 0) {
+    throw new Error("No profile found for your account.");
+  }
 }
